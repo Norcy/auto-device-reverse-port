@@ -11,7 +11,7 @@ npx auto-device-reverse-port install
 ## 验证
 
 ```bash
-auto-device-reverse-port status
+npx auto-device-reverse-port status
 ```
 
 输出中出现 `tcp:8081 tcp:8081` 即成功。
@@ -28,5 +28,5 @@ DEVICE_REVERSE_INTERVAL=10 npx auto-device-reverse-port install
 ## 卸载
 
 ```bash
-auto-device-reverse-port uninstall
+npx auto-device-reverse-port uninstall
 ```

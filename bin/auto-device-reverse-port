@@ -8,6 +8,7 @@ LEGACY_LABEL="com.norcy.device-reverse-port"
 SOURCE_SCRIPT="${0:A}"
 INSTALL_DIR="$HOME/.local/share/auto-device-reverse-port"
 INSTALL_SCRIPT="$INSTALL_DIR/auto-device-reverse-port.sh"
+CLI_PATH="$HOME/.local/bin/auto-device-reverse-port"
 PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
 OLD_PLIST_PATH="$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
 LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
@@ -189,7 +190,7 @@ uninstall_service() {
   launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
   launchctl unload "$LEGACY_PLIST_PATH" >/dev/null 2>&1 || true
   launchctl unload "$OLD_PLIST_PATH" >/dev/null 2>&1 || true
-  rm -f "$PLIST_PATH" "$LEGACY_PLIST_PATH" "$OLD_PLIST_PATH"
+  rm -f "$PLIST_PATH" "$LEGACY_PLIST_PATH" "$OLD_PLIST_PATH" "$CLI_PATH"
   rm -rf "$INSTALL_DIR" "$STATE_DIR" "$LOG_DIR"
   rm -rf "$LEGACY_INSTALL_DIR" "$LEGACY_STATE_DIR" "$LEGACY_LOG_DIR"
   rm -rf "$OLD_INSTALL_DIR" "$OLD_STATE_DIR" "$OLD_LOG_DIR"
