@@ -13,7 +13,7 @@
   "scripts": {
     "test": "zsh -n bin/auto-device-reverse-port",
     "prepack": "yarn test",
-    "postpublish": "git push && git push --tags"
+    "release": "yarn test && yarn publish --patch && git push && git push --tags"
   },
   "keywords": [
     "adb",
