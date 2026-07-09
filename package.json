@@ -11,7 +11,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "zsh -n bin/auto-device-reverse-port"
+    "test": "zsh -n bin/auto-device-reverse-port",
+    "prepack": "yarn test",
+    "postpublish": "git push && git push --tags"
   },
   "keywords": [
     "adb",
@@ -22,5 +24,8 @@
     "harmony",
     "android"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  }
 }
