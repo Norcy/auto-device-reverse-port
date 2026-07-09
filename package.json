@@ -7,13 +7,11 @@
   },
   "files": [
     "bin",
-    "install.sh",
-    "uninstall.sh",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "zsh -n bin/auto-device-reverse-port && zsh -n install.sh && zsh -n uninstall.sh"
+    "test": "zsh -n bin/auto-device-reverse-port"
   },
   "keywords": [
     "adb",
