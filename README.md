@@ -1,41 +1,31 @@
 # auto-device-reverse-port
 
-轻量级真机端口反向映射工具。插上 Android 或 Harmony 真机后，自动建立开发端口反向映射：
+使用 Android / Harmony 真机调试 React Native 时，无需再手动执行 `adb reverse` 或 `hdc rport`，自动把设备的开发端口连回电脑。
+
+默认处理：
 
 ```bash
 adb reverse tcp:8081 tcp:8081
 hdc rport tcp:8081 tcp:8081
 ```
 
-适合 React Native、Metro、Harmony 调试等需要设备访问电脑本地服务的场景。
-
 ## 安装
 
 ```bash
-zsh install.sh
+npx auto-device-reverse-port install
 ```
 
-安装后会注册 macOS 用户级 `launchd` 任务，不需要 sudo。
+安装后会注册 macOS 用户级后台任务，不需要 sudo。
 
-## 使用
+## 验证
 
-```bash
-auto-device-reverse-port status
-auto-device-reverse-port uninstall
-auto-device-reverse-port run-once
-```
-
-`run-once` 表示只执行一次检测和端口映射，然后立即退出。它主要给 `launchd` 定时调用，也可以手动触发调试。
-
-## 如何验证成功
-
-先确认后台任务已经被 `launchd` 加载：
+插上真机后执行：
 
 ```bash
 auto-device-reverse-port status
 ```
 
-服务部分看到类似下面内容表示自动任务正常：
+看到这些信息就说明后台任务正常：
 
 ```text
 服务:
@@ -45,73 +35,59 @@ auto-device-reverse-port status
   run interval = 3 seconds
 ```
 
-字段含义：
+说明：
 
-- `state = not running`：正常。它不是常驻进程，而是每隔几秒执行一次短任务。
-- `runs = 25`：已经自动执行过 25 次。
-- `last exit code = 0`：最近一次执行成功。
-- `run interval = 3 seconds`：当前每 3 秒检测一次。
+- `state = not running` 是正常的，它不是常驻进程，而是定时执行一次就退出。
+- `runs` 表示自动执行过多少次。
+- `last exit code = 0` 表示最近一次执行成功。
 
-再确认设备映射是否存在。Harmony 设备在 `status` 的 Harmony 映射里应看到：
+继续看 `status` 里的映射列表。
+
+Harmony 成功时会看到类似：
 
 ```text
 MJE0224B05005379    tcp:8081 tcp:8081    [Reverse]
 ```
 
-也可以单独执行：
-
-```bash
-hdc fport ls
-```
-
-Android 设备在 `status` 的 Android 映射里应看到：
+Android 成功时会看到类似：
 
 ```text
 设备ID tcp:8081 tcp:8081
 ```
 
-也可以单独执行：
+如果对应平台出现 `tcp:8081 tcp:8081`，就说明自动映射成功。
+
+## 常用命令
 
 ```bash
-adb reverse --list
+auto-device-reverse-port status
+auto-device-reverse-port uninstall
+auto-device-reverse-port run-once
 ```
 
-如果 `status` 里 `last exit code = 0`，并且对应平台的映射列表出现 `tcp:8081 tcp:8081`，就说明自动化成功。
+`run-once` 表示立即执行一次检测和映射，主要用于调试。
 
-## 配置
+## 配置端口
 
-默认映射 `tcp:8081 -> tcp:8081`，默认每 3 秒检测一次。
+默认映射 `8081 -> 8081`。需要改端口时：
 
 ```bash
-DEVICE_REVERSE_LOCAL_PORT=8081 DEVICE_REVERSE_REMOTE_PORT=8081 zsh install.sh
-DEVICE_REVERSE_INTERVAL=10 zsh install.sh
-HDC_PATH=/path/to/hdc zsh install.sh
-ADB_PATH=/path/to/adb zsh install.sh
+DEVICE_REVERSE_LOCAL_PORT=8081 DEVICE_REVERSE_REMOTE_PORT=8081 npx auto-device-reverse-port install
 ```
 
-`hdc` 默认查找顺序：
+想降低检测频率：
 
-1. `HDC_PATH`
-2. `PATH` 中的 `hdc`
-3. `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc`
-
-`adb` 默认查找顺序：
-
-1. `ADB_PATH`
-2. `PATH` 中的 `adb`
-3. `~/Library/Android/sdk/platform-tools/adb`
-
-## 安装位置
-
-```text
-~/.local/bin/auto-device-reverse-port
-~/.local/share/auto-device-reverse-port/auto-device-reverse-port.sh
-~/Library/LaunchAgents/com.norcy.auto-device-reverse-port.plist
-~/Library/Logs/auto-device-reverse-port/
+```bash
+DEVICE_REVERSE_INTERVAL=10 npx auto-device-reverse-port install
 ```
+
+没有安装 `adb` 或 `hdc` 时会直接跳过对应平台。
 
 ## 卸载
 
 ```bash
-zsh uninstall.sh
+auto-device-reverse-port uninstall
 ```
+
+这会删除后台任务、安装脚本副本、状态文件和日志。
+

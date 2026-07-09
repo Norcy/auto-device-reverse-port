@@ -13,6 +13,12 @@ OLD_PLIST_PATH="$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
 LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/auto-device-reverse-port"
 STATE_DIR="$HOME/Library/Application Support/auto-device-reverse-port"
+LEGACY_INSTALL_DIR="$HOME/.local/share/device-reverse-port"
+LEGACY_STATE_DIR="$HOME/Library/Application Support/device-reverse-port"
+LEGACY_LOG_DIR="$HOME/Library/Logs/device-reverse-port"
+OLD_INSTALL_DIR="$HOME/.local/share/hdc-rport-keeper"
+OLD_STATE_DIR="$HOME/Library/Application Support/hdc-rport-keeper"
+OLD_LOG_DIR="$HOME/Library/Logs/hdc-rport-keeper"
 LOCAL_PORT="${DEVICE_REVERSE_LOCAL_PORT:-8081}"
 REMOTE_PORT="${DEVICE_REVERSE_REMOTE_PORT:-8081}"
 INTERVAL="${DEVICE_REVERSE_INTERVAL:-3}"
@@ -169,8 +175,8 @@ install_service() {
   launchctl unload "$OLD_PLIST_PATH" >/dev/null 2>&1 || true
   launchctl unload "$LEGACY_PLIST_PATH" >/dev/null 2>&1 || true
   rm -f "$OLD_PLIST_PATH" "$LEGACY_PLIST_PATH"
-  rm -rf "$HOME/.local/share/hdc-rport-keeper" "$HOME/Library/Application Support/hdc-rport-keeper"
-  rm -rf "$HOME/.local/share/device-reverse-port" "$HOME/Library/Application Support/device-reverse-port"
+  rm -rf "$OLD_INSTALL_DIR" "$OLD_STATE_DIR" "$OLD_LOG_DIR"
+  rm -rf "$LEGACY_INSTALL_DIR" "$LEGACY_STATE_DIR" "$LEGACY_LOG_DIR"
 
   launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
   launchctl load "$PLIST_PATH"
@@ -181,8 +187,12 @@ install_service() {
 
 uninstall_service() {
   launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
-  rm -f "$PLIST_PATH"
-  rm -rf "$INSTALL_DIR" "$STATE_DIR"
+  launchctl unload "$LEGACY_PLIST_PATH" >/dev/null 2>&1 || true
+  launchctl unload "$OLD_PLIST_PATH" >/dev/null 2>&1 || true
+  rm -f "$PLIST_PATH" "$LEGACY_PLIST_PATH" "$OLD_PLIST_PATH"
+  rm -rf "$INSTALL_DIR" "$STATE_DIR" "$LOG_DIR"
+  rm -rf "$LEGACY_INSTALL_DIR" "$LEGACY_STATE_DIR" "$LEGACY_LOG_DIR"
+  rm -rf "$OLD_INSTALL_DIR" "$OLD_STATE_DIR" "$OLD_LOG_DIR"
   echo "已卸载 $LABEL"
 }
 
