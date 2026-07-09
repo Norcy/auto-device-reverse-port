@@ -1,0 +1,266 @@
+#!/bin/zsh
+
+set -e
+
+LABEL="com.norcy.auto-device-reverse-port"
+OLD_LABEL="com.norcy.hdc-rport-keeper"
+LEGACY_LABEL="com.norcy.device-reverse-port"
+SOURCE_SCRIPT="${0:A}"
+INSTALL_DIR="$HOME/.local/share/auto-device-reverse-port"
+INSTALL_SCRIPT="$INSTALL_DIR/auto-device-reverse-port.sh"
+PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
+OLD_PLIST_PATH="$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
+LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
+LOG_DIR="$HOME/Library/Logs/auto-device-reverse-port"
+STATE_DIR="$HOME/Library/Application Support/auto-device-reverse-port"
+LOCAL_PORT="${DEVICE_REVERSE_LOCAL_PORT:-8081}"
+REMOTE_PORT="${DEVICE_REVERSE_REMOTE_PORT:-8081}"
+INTERVAL="${DEVICE_REVERSE_INTERVAL:-3}"
+HDC_PATH="${HDC_PATH:-}"
+ADB_PATH="${ADB_PATH:-}"
+
+find_hdc() {
+  if [ -n "$HDC_PATH" ] && [ -x "$HDC_PATH" ]; then
+    echo "$HDC_PATH"
+    return
+  fi
+
+  if command -v hdc >/dev/null 2>&1; then
+    command -v hdc
+    return
+  fi
+
+  local default_hdc="/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc"
+  if [ -x "$default_hdc" ]; then
+    echo "$default_hdc"
+    return
+  fi
+
+  echo ""
+}
+
+find_adb() {
+  if [ -n "$ADB_PATH" ] && [ -x "$ADB_PATH" ]; then
+    echo "$ADB_PATH"
+    return
+  fi
+
+  if command -v adb >/dev/null 2>&1; then
+    command -v adb
+    return
+  fi
+
+  local default_adb="$HOME/Library/Android/sdk/platform-tools/adb"
+  if [ -x "$default_adb" ]; then
+    echo "$default_adb"
+    return
+  fi
+
+  echo ""
+}
+
+run_hdc() {
+  local hdc
+  hdc="$(find_hdc)"
+  if [ -z "$hdc" ]; then
+    echo ""
+    return
+  fi
+
+  local targets
+  targets="$("$hdc" list targets 2>/dev/null | awk 'NF && $0 !~ /Empty|^\[|^List/ {print $1}')"
+  if [ -z "$targets" ]; then
+    echo ""
+    return
+  fi
+
+  local target
+  for target in ${(f)targets}; do
+    "$hdc" -t "$target" rport "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"
+  done
+
+  printf "hdc:%s\n" "$targets"
+}
+
+run_adb() {
+  local adb
+  adb="$(find_adb)"
+  if [ -z "$adb" ]; then
+    echo ""
+    return
+  fi
+
+  local targets
+  targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+  if [ -z "$targets" ]; then
+    echo ""
+    return
+  fi
+
+  local target
+  for target in ${(f)targets}; do
+    "$adb" -s "$target" reverse "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"
+  done
+
+  printf "adb:%s\n" "$targets"
+}
+
+run_once() {
+  mkdir -p "$STATE_DIR"
+
+  local result current_hash previous_hash
+  result="$(run_hdc)
+$(run_adb)"
+
+  if [ -z "${result//$'\n'/}" ]; then
+    rm -f "$STATE_DIR/targets"
+    exit 0
+  fi
+
+  current_hash="$(printf "%s\n%s\n%s\n" "$result" "$LOCAL_PORT" "$REMOTE_PORT" | shasum | awk '{print $1}')"
+  previous_hash="$(cat "$STATE_DIR/targets" 2>/dev/null || true)"
+  if [ "$current_hash" = "$previous_hash" ]; then
+    exit 0
+  fi
+
+  echo "$current_hash" > "$STATE_DIR/targets"
+}
+
+write_plist() {
+  mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+
+  cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>$INSTALL_SCRIPT</string>
+      <string>run-once</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>$INTERVAL</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/stderr.log</string>
+  </dict>
+</plist>
+EOF
+}
+
+install_service() {
+  mkdir -p "$INSTALL_DIR"
+  cp "$SOURCE_SCRIPT" "$INSTALL_SCRIPT"
+  chmod +x "$INSTALL_SCRIPT"
+  write_plist
+
+  launchctl unload "$OLD_PLIST_PATH" >/dev/null 2>&1 || true
+  launchctl unload "$LEGACY_PLIST_PATH" >/dev/null 2>&1 || true
+  rm -f "$OLD_PLIST_PATH" "$LEGACY_PLIST_PATH"
+  rm -rf "$HOME/.local/share/hdc-rport-keeper" "$HOME/Library/Application Support/hdc-rport-keeper"
+  rm -rf "$HOME/.local/share/device-reverse-port" "$HOME/Library/Application Support/device-reverse-port"
+
+  launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
+  launchctl load "$PLIST_PATH"
+
+  echo "已安装 $LABEL"
+  echo "端口: tcp:$LOCAL_PORT -> tcp:$REMOTE_PORT"
+}
+
+uninstall_service() {
+  launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
+  rm -f "$PLIST_PATH"
+  rm -rf "$INSTALL_DIR" "$STATE_DIR"
+  echo "已卸载 $LABEL"
+}
+
+service_status() {
+  echo "服务:"
+  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | awk '
+    /state =|runs =|last exit code =|run interval =/ {
+      sub(/^[[:space:]]+/, "")
+      print "  " $0
+    }
+  ' || echo "  未加载"
+  echo "配置: $PLIST_PATH"
+  echo "日志: $LOG_DIR"
+
+  local hdc adb
+  hdc="$(find_hdc)"
+  adb="$(find_adb)"
+
+  echo ""
+  echo "Harmony:"
+  if [ -z "$hdc" ]; then
+    echo "  hdc: 未找到"
+  else
+    echo "  hdc: $hdc"
+    echo "  设备:"
+    "$hdc" list targets 2>/dev/null | sed 's/^/    /' || true
+    echo "  映射:"
+    "$hdc" fport ls 2>/dev/null | sed 's/^/    /' || true
+  fi
+
+  echo ""
+  echo "Android:"
+  if [ -z "$adb" ]; then
+    echo "  adb: 未找到"
+  else
+    echo "  adb: $adb"
+    echo "  设备:"
+    "$adb" devices 2>/dev/null | sed 's/^/    /' || true
+    echo "  映射:"
+    "$adb" reverse --list 2>/dev/null | sed 's/^/    /' || true
+  fi
+}
+
+case "$1" in
+  install)
+    install_service
+    ;;
+  uninstall)
+    uninstall_service
+    ;;
+  start)
+    launchctl load "$PLIST_PATH"
+    ;;
+  stop)
+    launchctl unload "$PLIST_PATH"
+    ;;
+  restart)
+    launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
+    launchctl load "$PLIST_PATH"
+    ;;
+  status)
+    service_status
+    ;;
+  run-once)
+    run_once
+    ;;
+  *)
+    echo "用法:"
+    echo "  auto-device-reverse-port install"
+    echo "  auto-device-reverse-port status"
+    echo "  auto-device-reverse-port uninstall"
+    echo "  auto-device-reverse-port run-once"
+    echo ""
+    echo "可选环境变量:"
+    echo "  HDC_PATH=/path/to/hdc"
+    echo "  ADB_PATH=/path/to/adb"
+    echo "  DEVICE_REVERSE_LOCAL_PORT=8081"
+    echo "  DEVICE_REVERSE_REMOTE_PORT=8081"
+    echo "  DEVICE_REVERSE_INTERVAL=3"
+    ;;
+esac
