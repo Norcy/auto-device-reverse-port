@@ -24,6 +24,8 @@ REMOTE_PORT="${DEVICE_REVERSE_REMOTE_PORT:-8081}"
 INTERVAL="${DEVICE_REVERSE_INTERVAL:-5}"
 HDC_PATH="${HDC_PATH:-}"
 ADB_PATH="${ADB_PATH:-}"
+ADB_DISCOVERY_RETRIES="${DEVICE_REVERSE_ADB_DISCOVERY_RETRIES:-3}"
+ADB_DISCOVERY_DELAY="${DEVICE_REVERSE_ADB_DISCOVERY_DELAY:-1}"
 
 find_hdc() {
   if [ -n "$HDC_PATH" ] && [ -x "$HDC_PATH" ]; then
@@ -96,8 +98,23 @@ run_adb() {
     return
   fi
 
-  local targets
-  targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+  # The first `adb devices` may only start the adb server. In particular, a
+  # freshly attached USB device can still be transitioning through offline
+  # before it becomes usable. A status command used to hide this race by
+  # performing another adb query from the terminal.
+  "$adb" start-server >/dev/null 2>&1 || true
+
+  local targets attempt=1
+  while true; do
+    targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+    if [ -n "$targets" ] || [ "$attempt" -ge "$ADB_DISCOVERY_RETRIES" ]; then
+      break
+    fi
+
+    sleep "$ADB_DISCOVERY_DELAY"
+    attempt=$((attempt + 1))
+  done
+
   if [ -z "$targets" ]; then
     echo ""
     return
@@ -105,7 +122,9 @@ run_adb() {
 
   local target
   for target in ${(f)targets}; do
-    "$adb" -s "$target" reverse "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"
+    if ! "$adb" -s "$target" reverse "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"; then
+      echo "adb reverse failed for $target" >&2
+    fi
   done
 
   printf "adb:%s\n" "$targets"
@@ -155,6 +174,18 @@ write_plist() {
 
     <key>RunAtLoad</key>
     <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>DEVICE_REVERSE_LOCAL_PORT</key>
+      <string>$LOCAL_PORT</string>
+      <key>DEVICE_REVERSE_REMOTE_PORT</key>
+      <string>$REMOTE_PORT</string>
+      <key>DEVICE_REVERSE_ADB_DISCOVERY_RETRIES</key>
+      <string>$ADB_DISCOVERY_RETRIES</string>
+      <key>DEVICE_REVERSE_ADB_DISCOVERY_DELAY</key>
+      <string>$ADB_DISCOVERY_DELAY</string>
+    </dict>
 
     <key>StandardOutPath</key>
     <string>$LOG_DIR/stdout.log</string>
@@ -272,5 +303,7 @@ case "$1" in
     echo "  DEVICE_REVERSE_LOCAL_PORT=8081"
     echo "  DEVICE_REVERSE_REMOTE_PORT=8081"
     echo "  DEVICE_REVERSE_INTERVAL=5"
+    echo "  DEVICE_REVERSE_ADB_DISCOVERY_RETRIES=3"
+    echo "  DEVICE_REVERSE_ADB_DISCOVERY_DELAY=1"
     ;;
 esac
