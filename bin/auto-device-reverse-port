@@ -19,8 +19,41 @@ LEGACY_LOG_DIR="$HOME/Library/Logs/device-reverse-port"
 OLD_INSTALL_DIR="$HOME/.local/share/hdc-rport-keeper"
 OLD_STATE_DIR="$HOME/Library/Application Support/hdc-rport-keeper"
 OLD_LOG_DIR="$HOME/Library/Logs/hdc-rport-keeper"
-LOCAL_PORT="${DEVICE_REVERSE_LOCAL_PORT:-8081}"
-REMOTE_PORT="${DEVICE_REVERSE_REMOTE_PORT:-8081}"
+# Explicit legacy settings retain their original single-mapping behavior.
+if [[ -n "${DEVICE_REVERSE_PORTS:-}" ]]; then
+  PORT_SPEC="$DEVICE_REVERSE_PORTS"
+elif [[ -n "${DEVICE_REVERSE_LOCAL_PORT:-}" || -n "${DEVICE_REVERSE_REMOTE_PORT:-}" ]]; then
+  PORT_SPEC="${DEVICE_REVERSE_LOCAL_PORT:-8081}:${DEVICE_REVERSE_REMOTE_PORT:-8081}"
+else
+  PORT_SPEC="8081,8082"
+fi
+
+# Each entry is device-port[:computer-port]. Normalize before writing the plist.
+if [[ "$PORT_SPEC" == ,* || "$PORT_SPEC" == *, || "$PORT_SPEC" == *,,* ]]; then
+  echo "端口列表不能包含空项: $PORT_SPEC" >&2
+  exit 1
+fi
+typeset -a PORT_MAPPINGS
+for entry in ${(s:,:)PORT_SPEC}; do
+  if [[ "$entry" != <-> && "$entry" != <->:<-> ]]; then
+    echo "无效端口配置: $entry（示例: 8081,8082 或 8082:8081）" >&2
+    exit 1
+  fi
+  device_port="${entry%%:*}"
+  computer_port="${entry##*:}"
+  if (( ${#device_port} > 5 || ${#computer_port} > 5 )); then
+    echo "端口必须在 1–65535 之间: $entry" >&2
+    exit 1
+  fi
+  device_port=$((10#$device_port))
+  computer_port=$((10#$computer_port))
+  if (( device_port < 1 || device_port > 65535 || computer_port < 1 || computer_port > 65535 )); then
+    echo "端口必须在 1–65535 之间: $entry" >&2
+    exit 1
+  fi
+  PORT_MAPPINGS+=("$device_port:$computer_port")
+done
+PORT_SPEC="${(j:,:)PORT_MAPPINGS}"
 INTERVAL="${DEVICE_REVERSE_INTERVAL:-5}"
 HDC_PATH="${HDC_PATH:-}"
 ADB_PATH="${ADB_PATH:-}"
@@ -82,9 +115,13 @@ run_hdc() {
     return
   fi
 
-  local target
+  local target mapping
   for target in ${(f)targets}; do
-    "$hdc" -t "$target" rport "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"
+    for mapping in "${PORT_MAPPINGS[@]}"; do
+      if ! "$hdc" -t "$target" rport "tcp:${mapping%%:*}" "tcp:${mapping##*:}"; then
+        echo "hdc rport failed for $target ($mapping)" >&2
+      fi
+    done
   done
 
   printf "hdc:%s\n" "$targets"
@@ -120,35 +157,22 @@ run_adb() {
     return
   fi
 
-  local target
+  local target mapping
   for target in ${(f)targets}; do
-    if ! "$adb" -s "$target" reverse "tcp:$LOCAL_PORT" "tcp:$REMOTE_PORT"; then
-      echo "adb reverse failed for $target" >&2
-    fi
+    for mapping in "${PORT_MAPPINGS[@]}"; do
+      if ! "$adb" -s "$target" reverse "tcp:${mapping%%:*}" "tcp:${mapping##*:}" >/dev/null; then
+        echo "adb reverse failed for $target ($mapping)" >&2
+      fi
+    done
   done
 
   printf "adb:%s\n" "$targets"
 }
 
 run_once() {
-  mkdir -p "$STATE_DIR"
-
-  local result current_hash previous_hash
-  result="$(run_hdc)
-$(run_adb)"
-
-  if [ -z "${result//$'\n'/}" ]; then
-    rm -f "$STATE_DIR/targets"
-    exit 0
-  fi
-
-  current_hash="$(printf "%s\n%s\n%s\n" "$result" "$LOCAL_PORT" "$REMOTE_PORT" | shasum | awk '{print $1}')"
-  previous_hash="$(cat "$STATE_DIR/targets" 2>/dev/null || true)"
-  if [ "$current_hash" = "$previous_hash" ]; then
-    exit 0
-  fi
-
-  echo "$current_hash" > "$STATE_DIR/targets"
+  # Reapply every interval: a reconnect can discard mappings without changing IDs.
+  run_hdc >/dev/null
+  run_adb >/dev/null
 }
 
 write_plist() {
@@ -177,10 +201,8 @@ write_plist() {
 
     <key>EnvironmentVariables</key>
     <dict>
-      <key>DEVICE_REVERSE_LOCAL_PORT</key>
-      <string>$LOCAL_PORT</string>
-      <key>DEVICE_REVERSE_REMOTE_PORT</key>
-      <string>$REMOTE_PORT</string>
+      <key>DEVICE_REVERSE_PORTS</key>
+      <string>$PORT_SPEC</string>
       <key>DEVICE_REVERSE_ADB_DISCOVERY_RETRIES</key>
       <string>$ADB_DISCOVERY_RETRIES</string>
       <key>DEVICE_REVERSE_ADB_DISCOVERY_DELAY</key>
@@ -213,7 +235,7 @@ install_service() {
   launchctl load "$PLIST_PATH"
 
   echo "已安装 $LABEL"
-  echo "端口: tcp:$LOCAL_PORT -> tcp:$REMOTE_PORT"
+  echo "端口（设备:电脑）: $PORT_SPEC"
 }
 
 uninstall_service() {
@@ -263,7 +285,12 @@ service_status() {
     echo "  设备:"
     "$adb" devices 2>/dev/null | sed 's/^/    /' || true
     echo "  映射:"
-    "$adb" reverse --list 2>/dev/null | sed 's/^/    /' || true
+    local target targets
+    targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+    for target in ${(f)targets}; do
+      echo "    $target:"
+      "$adb" -s "$target" reverse --list 2>/dev/null | sed 's/^/      /' || true
+    done
   fi
 }
 
@@ -300,7 +327,8 @@ case "$1" in
     echo "可选环境变量:"
     echo "  HDC_PATH=/path/to/hdc"
     echo "  ADB_PATH=/path/to/adb"
-    echo "  DEVICE_REVERSE_LOCAL_PORT=8081"
+    echo "  DEVICE_REVERSE_PORTS=8081,8082（或 8082:8081）"
+    echo "  DEVICE_REVERSE_LOCAL_PORT=8081（兼容旧配置）"
     echo "  DEVICE_REVERSE_REMOTE_PORT=8081"
     echo "  DEVICE_REVERSE_INTERVAL=5"
     echo "  DEVICE_REVERSE_ADB_DISCOVERY_RETRIES=3"

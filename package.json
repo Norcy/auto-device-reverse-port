@@ -11,7 +11,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "zsh -n bin/auto-device-reverse-port",
+    "test": "zsh -n bin/auto-device-reverse-port && python3 scripts/test-ports.py",
     "prepack": "yarn test",
     "release": "sh scripts/release.sh"
   },
