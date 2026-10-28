@@ -18,6 +18,8 @@ npx auto-device-reverse-port status
 
 升级后需要重新执行 `install`，后台服务才会使用新版脚本和配置。
 
+后台命令失败时，时间、命令（含设备与端口）、退出码及具体错误写入 `~/Library/Logs/auto-device-reverse-port/stderr.log`。没有已连接设备属于正常情况，不记录失败；本工具不主动连接 TCP 设备。
+
 ## 进阶配置
 
 支持逗号分隔的端口，或用 `设备端口:电脑端口` 指定映射。显式设置后会替换默认端口：

@@ -1,5 +1,6 @@
 """Exercise the shell entry point with fake devices; no real mappings are changed."""
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -52,4 +53,63 @@ fi
     for invalid in ['0', '65536', 'abc', '8081,', ',8081', '8081,,8082', '80:90:100', '999999999999999999999']:
         result = subprocess.run(['zsh', str(script), 'run-once'], env=env | {'DEVICE_REVERSE_PORTS': invalid}, capture_output=True)
         assert result.returncode != 0, invalid
-print('Passed: defaults, multiple ports/devices, custom mappings, legacy settings, precedence, failure isolation and invalid ports')
+
+    adb.write_text('''#!/bin/zsh
+if [[ "$1" == "$TEST_ADB_FAIL" || ( "$1" == -s && "$TEST_ADB_FAIL" == reverse ) ]]; then
+  echo 'adb: error: simulated transport failure' >&2
+  exit 42
+fi
+if [[ "$1" == devices ]]; then
+  echo 'List of devices attached'
+  [[ "$TEST_ADB_FAIL" == empty ]] || echo 'test-phone device'
+elif [[ "$1" == -s ]]; then
+  echo "$*" >> "$TEST_CALLS"
+fi
+exit 0
+''')
+    hdc.write_text('''#!/bin/zsh
+if [[ "$1" == list ]]; then
+  if [[ "$TEST_HDC_FAIL" == list ]]; then
+    echo '[Fail] simulated discovery failure'
+  elif [[ "$TEST_HDC_FAIL" == empty ]]; then
+    echo '[Empty]'
+  else
+    echo test-harmony
+  fi
+elif [[ "$TEST_HDC_FAIL" == rport ]]; then
+  echo '[Fail] simulated mapping failure'
+else
+  echo "hdc $*" >> "$TEST_CALLS"
+fi
+exit 0
+''')
+    log = root / 'stderr.log'
+    cases = [
+        ('start-server', 'empty', ['start-server', '退出码 42', 'simulated transport failure']),
+        ('devices', 'empty', ['devices', '退出码 42', 'simulated transport failure']),
+        ('reverse', 'empty', ['test-phone reverse tcp:8081 tcp:8081', 'tcp:8082', 'simulated transport failure']),
+        ('', 'list', ['list targets', '退出码 0', '[Fail] simulated discovery failure']),
+        ('', 'rport', ['test-harmony rport tcp:8081 tcp:8081', 'tcp:8082', '[Fail] simulated mapping failure']),
+        ('empty', 'empty', []),
+        ('', '', []),
+    ]
+    for adb_fail, hdc_fail, expected in cases:
+        calls.write_text('')
+        with log.open('w') as errors:
+            result = subprocess.run(
+                ['zsh', str(script), 'run-once'],
+                env=env | {'TEST_ADB_FAIL': adb_fail, 'TEST_HDC_FAIL': hdc_fail, 'DEVICE_REVERSE_ADB_DISCOVERY_RETRIES': '1'},
+                stdout=subprocess.PIPE, stderr=errors, text=True,
+            )
+        assert result.returncode == 0, log.read_text()
+        assert not result.stdout, result.stdout
+        logged = log.read_text()
+        if expected:
+            assert re.search(r'\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d[+-]\d{4}\]', logged), logged
+            for part in expected:
+                assert part in logged, logged
+        else:
+            assert not logged, logged
+        if hdc_fail in ('list', 'rport'):
+            assert '-s test-phone reverse tcp:8081 tcp:8081' in calls.read_text(), calls.read_text()
+print('Passed: port mappings, invalid settings, failure logs on disk, empty devices, successful commands and HDC/ADB failure isolation')

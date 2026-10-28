@@ -100,6 +100,24 @@ find_adb() {
   echo ""
 }
 
+run_command() {
+  local output exit_code
+  if output="$("$@" 2>&1)"; then
+    # HDC 有些失败只输出 [Fail]，退出码仍为 0。
+    if [[ "$output" != *'[Fail]'* ]]; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+
+  printf '[%s] 命令失败（退出码 %s）：%s\n%s\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S%z')" "$exit_code" "$*" "${output:-无错误输出}" >&2
+  return 1
+}
+
 run_hdc() {
   local hdc
   hdc="$(find_hdc)"
@@ -108,8 +126,11 @@ run_hdc() {
     return
   fi
 
-  local targets
-  targets="$("$hdc" list targets 2>/dev/null | awk 'NF && $0 !~ /Empty|^\[|^List/ {print $1}')"
+  local output targets
+  if ! output="$(run_command "$hdc" list targets)"; then
+    return 0
+  fi
+  targets="$(printf '%s\n' "$output" | awk 'NF && $0 !~ /Empty|^\[|^List/ {print $1}')"
   if [ -z "$targets" ]; then
     echo ""
     return
@@ -118,9 +139,7 @@ run_hdc() {
   local target mapping
   for target in ${(f)targets}; do
     for mapping in "${PORT_MAPPINGS[@]}"; do
-      if ! "$hdc" -t "$target" rport "tcp:${mapping%%:*}" "tcp:${mapping##*:}"; then
-        echo "hdc rport failed for $target ($mapping)" >&2
-      fi
+      run_command "$hdc" -t "$target" rport "tcp:${mapping%%:*}" "tcp:${mapping##*:}" >/dev/null || true
     done
   done
 
@@ -139,11 +158,14 @@ run_adb() {
   # freshly attached USB device can still be transitioning through offline
   # before it becomes usable. A status command used to hide this race by
   # performing another adb query from the terminal.
-  "$adb" start-server >/dev/null 2>&1 || true
+  run_command "$adb" start-server >/dev/null || return 0
 
-  local targets attempt=1
+  local output targets attempt=1
   while true; do
-    targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+    if ! output="$(run_command "$adb" devices)"; then
+      return 0
+    fi
+    targets="$(printf '%s\n' "$output" | awk '$2 == "device" {print $1}')"
     if [ -n "$targets" ] || [ "$attempt" -ge "$ADB_DISCOVERY_RETRIES" ]; then
       break
     fi
@@ -160,9 +182,7 @@ run_adb() {
   local target mapping
   for target in ${(f)targets}; do
     for mapping in "${PORT_MAPPINGS[@]}"; do
-      if ! "$adb" -s "$target" reverse "tcp:${mapping%%:*}" "tcp:${mapping##*:}" >/dev/null; then
-        echo "adb reverse failed for $target ($mapping)" >&2
-      fi
+      run_command "$adb" -s "$target" reverse "tcp:${mapping%%:*}" "tcp:${mapping##*:}" >/dev/null || true
     done
   done
 
@@ -271,9 +291,9 @@ service_status() {
   else
     echo "  hdc: $hdc"
     echo "  设备:"
-    "$hdc" list targets 2>/dev/null | sed 's/^/    /' || true
+    run_command "$hdc" list targets | sed 's/^/    /' || true
     echo "  映射:"
-    "$hdc" fport ls 2>/dev/null | sed 's/^/    /' || true
+    run_command "$hdc" fport ls | sed 's/^/    /' || true
   fi
 
   echo ""
@@ -283,13 +303,15 @@ service_status() {
   else
     echo "  adb: $adb"
     echo "  设备:"
-    "$adb" devices 2>/dev/null | sed 's/^/    /' || true
+    local output
+    output="$(run_command "$adb" devices)" || return 0
+    printf '%s\n' "$output" | sed 's/^/    /'
     echo "  映射:"
     local target targets
-    targets="$("$adb" devices 2>/dev/null | awk '$2 == "device" {print $1}')"
+    targets="$(printf '%s\n' "$output" | awk '$2 == "device" {print $1}')"
     for target in ${(f)targets}; do
       echo "    $target:"
-      "$adb" -s "$target" reverse --list 2>/dev/null | sed 's/^/      /' || true
+      run_command "$adb" -s "$target" reverse --list | sed 's/^/      /' || true
     done
   fi
 }
